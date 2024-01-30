@@ -1,117 +1,194 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <limits.h>
 #include "libcoro.h"
-
-/**
- * You can compile and run this code using the commands:
- *
- * $> gcc solution.c libcoro.c
- * $> ./a.out
- */
+#include "heap_help.h"
 
 struct my_context {
 	char *name;
+	char *filename;
+	int **arr_p;
+	int *arr;
+	int *size_p;
+	int sec_start;
+	int nsec_start;
+	int sec_finish;
+	int nsec_finish;
+	int sec_total;
+	int nsec_total;
 	/** ADD HERE YOUR OWN MEMBERS, SUCH AS FILE NAME, WORK TIME, ... */
 };
 
-static struct my_context *
-my_context_new(const char *name)
+static struct my_context *my_context_new(const char *name, char *filename, int **data_p, int* size_p)
 {
 	struct my_context *ctx = malloc(sizeof(*ctx));
 	ctx->name = strdup(name);
+	ctx->filename = filename;
+	ctx->arr_p = data_p;
+	ctx->size_p = size_p;
 	return ctx;
 }
 
-static void
-my_context_delete(struct my_context *ctx)
+static void my_context_delete(struct my_context *ctx)
 {
 	free(ctx->name);
 	free(ctx);
 }
 
-/**
- * A function, called from inside of coroutines recursively. Just to demonstrate
- * the example. You can split your code into multiple functions, that usually
- * helps to keep the individual code blocks simple.
- */
-static void
-other_function(const char *name, int depth)
-{
-	printf("%s: entered function, depth = %d\n", name, depth);
-	coro_yield();
-	if (depth < 3)
-		other_function(name, depth + 1);
+// function to swap elements
+void swap(int *a, int *b) {
+  int t = *a;
+  *a = *b;
+  *b = t;
 }
 
-/**
- * Coroutine body. This code is executed by all the coroutines. Here you
- * implement your solution, sort each individual file.
- */
-static int
-coroutine_func_f(void *context)
-{
-	/* IMPLEMENT SORTING OF INDIVIDUAL FILES HERE. */
+// function to find the partition position
+int partition(int *array, int low, int high) {
+  int pivot = array[high];
+  int i = (low - 1);
 
+  for (int j = low; j < high; j++) {
+    if (array[j] <= pivot) {
+      i++;
+      swap(&array[i], &array[j]);
+    }
+  }
+  swap(&array[i + 1], &array[high]);
+  return (i + 1);
+}
+
+static void calculate_time(struct my_context *ctx) {
+	ctx->sec_total += ctx->sec_finish - ctx->sec_start;
+	if (ctx->nsec_finish - ctx->nsec_start < 0) {
+		ctx->nsec_total += 1000000000 - (ctx->nsec_finish - ctx->nsec_start);
+		ctx->sec_total -= 1;
+	} else {
+		ctx->nsec_total += ctx->nsec_finish - ctx->nsec_start;
+	}
+}
+
+void quickSort(int *array, int low, int high, struct my_context *ctx) {
+  if (low < high) {
+    int pi = partition(array, low, high);
+    quickSort(array, low, pi - 1, ctx);
+    quickSort(array, pi + 1, high, ctx);
+	struct timespec time;
+	clock_gettime(CLOCK_MONOTONIC, &time);
+	ctx->sec_finish = time.tv_sec;
+	ctx->nsec_finish = time.tv_nsec;
+	calculate_time(ctx);
+	coro_yield();
+	clock_gettime(CLOCK_MONOTONIC, &time);
+	ctx->sec_start = time.tv_sec;
+	ctx->nsec_start = time.tv_nsec;	
+  }
+}
+
+static int coroutine_func_f(void *context)
+{
 	struct coro *this = coro_this();
 	struct my_context *ctx = context;
-	char *name = ctx->name;
-	printf("Started coroutine %s\n", name);
-	printf("%s: switch count %lld\n", name, coro_switch_count(this));
-	printf("%s: yield\n", name);
-	coro_yield();
+	struct timespec start;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	ctx->sec_start = start.tv_sec;
+	ctx->nsec_start = start.tv_nsec;
+	char *filename = ctx->filename;
+	FILE *in = fopen(filename, "r");
+	if (!in) {
+		my_context_delete(ctx);
+		return 1;
+	}
+	int size = 0;
+	int cap = 100;
+	ctx->arr = malloc(cap * sizeof(int));
 
-	printf("%s: switch count %lld\n", name, coro_switch_count(this));
-	printf("%s: yield\n", name);
-	coro_yield();
+	while (fscanf(in, "%d", ctx->arr + size) == 1) {
+		++size;
+		if (size == cap) {
+			cap *= 2;
+			ctx->arr = realloc(ctx->arr, cap * sizeof(int));
+		}
+	}
+	cap = size;
+	ctx->arr = realloc(ctx->arr, cap * sizeof(int));
 
-	printf("%s: switch count %lld\n", name, coro_switch_count(this));
-	other_function(name, 1);
-	printf("%s: switch count after other function %lld\n", name,
-	       coro_switch_count(this));
+	fclose(in);
+	quickSort(ctx->arr, 0, size, ctx);
+	*ctx->arr_p = ctx->arr; 
+	*ctx->size_p = size;
+	struct timespec finish;
+	clock_gettime(CLOCK_MONOTONIC, &finish);
+	ctx->sec_finish = finish.tv_sec;
+	ctx->nsec_finish = finish.tv_nsec;
+	calculate_time(ctx);
 
+	printf("%s info:\nswitch count %lld\nworked %dms\n\n",
+	 	ctx->name,
+	    coro_switch_count(this),
+		ctx->sec_total * 1000 + ctx->nsec_total / 1000000
+		);
 	my_context_delete(ctx);
-	/* This will be returned from coro_status(). */
 	return 0;
 }
 
-int
-main(int argc, char **argv)
+int merge(int **data, int *size, int *idx, int cnt) {
+	int min_idx = -1;
+	int curr_min = INT_MAX;
+	for (int i = 0; i < cnt; ++i) {
+		if ((size[i] > idx[i]) && (data[i][idx[i]] < curr_min)) {
+			curr_min = data[i][idx[i]];
+			min_idx = i;
+		}
+	}
+	return min_idx;
+}
+
+int main(int argc, char **argv)
 {
-	/* Delete these suppressions when start using the args. */
-	(void)argc;
-	(void)argv;
-	/* Initialize our coroutine global cooperative scheduler. */
 	coro_sched_init();
-	/* Start several coroutines. */
-	for (int i = 0; i < 3; ++i) {
-		/*
-		 * The coroutines can take any 'void *' interpretation of which
-		 * depends on what you want. Here as an example I give them
-		 * some names.
-		 */
+	int *p[argc - 1];
+	int **data[argc - 1];
+	int s[argc - 1];
+	int *size[argc - 1];
+	for (int i = 0; i < argc - 1; ++i) {
+
 		char name[16];
 		sprintf(name, "coro_%d", i);
-		/*
-		 * I have to copy the name. Otherwise all the coroutines would
-		 * have the same name when they finally start.
-		 */
-		coro_new(coroutine_func_f, my_context_new(name));
+		data[i] = &p[i]; 
+		size[i] = &s[i];
+		coro_new(coroutine_func_f, my_context_new(name, argv[i + 1], data[i], size[i]));
 	}
-	/* Wait for all the coroutines to end. */
 	struct coro *c;
 	while ((c = coro_sched_wait()) != NULL) {
-		/*
-		 * Each 'wait' returns a finished coroutine with which you can
-		 * do anything you want. Like check its exit status, for
-		 * example. Don't forget to free the coroutine afterwards.
-		 */
-		printf("Finished %d\n", coro_status(c));
 		coro_delete(c);
 	}
-	/* All coroutines have finished. */
+	int idx[argc - 1];
+	int total_size = 0;
+	for (int i = 0; i < argc - 1; ++i) {
+		p[i] = *data[i];
+		s[i] = *size[i];
+		idx[i] = 0;
+		total_size += s[i];
+	}
 
-	/* IMPLEMENT MERGING OF THE SORTED ARRAYS HERE. */
+	FILE *out = fopen("out.txt", "w");
+
+	int min_idx = 0;
+	
+	while(min_idx != -1) {
+		min_idx = merge(p, s, idx, argc - 1);
+		if (min_idx != -1) {
+			fprintf(out, "%d ", p[min_idx][idx[min_idx]]);
+			idx[min_idx] += 1;
+		}
+	}
+	fclose(out);
+	
+	for (int i = 0; i < argc - 1; ++i) {
+		free(*data[i]);
+	}
 
 	return 0;
 }
