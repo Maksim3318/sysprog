@@ -62,8 +62,8 @@ int partition(int *array, int low, int high) {
 static void calculate_time(struct my_context *ctx) {
 	ctx->sec_total += ctx->sec_finish - ctx->sec_start;
 	if (ctx->nsec_finish - ctx->nsec_start < 0) {
-		ctx->nsec_total += 1000000000 - (ctx->nsec_finish - ctx->nsec_start);
-		ctx->sec_total -= 1;
+		ctx->nsec_total += 1000000000 + ctx->nsec_finish - ctx->nsec_start;
+		ctx->sec_total--;
 	} else {
 		ctx->nsec_total += ctx->nsec_finish - ctx->nsec_start;
 	}
@@ -74,12 +74,16 @@ void quickSort(int *array, int low, int high, struct my_context *ctx) {
     int pi = partition(array, low, high);
     quickSort(array, low, pi - 1, ctx);
     quickSort(array, pi + 1, high, ctx);
+
 	struct timespec time;
 	clock_gettime(CLOCK_MONOTONIC, &time);
 	ctx->sec_finish = time.tv_sec;
 	ctx->nsec_finish = time.tv_nsec;
+	
 	calculate_time(ctx);
+	
 	coro_yield();
+	
 	clock_gettime(CLOCK_MONOTONIC, &time);
 	ctx->sec_start = time.tv_sec;
 	ctx->nsec_start = time.tv_nsec;	
@@ -118,16 +122,18 @@ static int coroutine_func_f(void *context)
 	quickSort(ctx->arr, 0, size, ctx);
 	*ctx->arr_p = ctx->arr; 
 	*ctx->size_p = size;
+	
 	struct timespec finish;
 	clock_gettime(CLOCK_MONOTONIC, &finish);
 	ctx->sec_finish = finish.tv_sec;
 	ctx->nsec_finish = finish.tv_nsec;
+	
 	calculate_time(ctx);
 
 	printf("%s info:\nswitch count %lld\nworked %dms\n\n",
 	 	ctx->name,
 	    coro_switch_count(this),
-		ctx->sec_total * 1000 + ctx->nsec_total / 1000000
+		ctx->sec_total * 1000000 + ctx->nsec_total / 1000
 		);
 	my_context_delete(ctx);
 	return 0;
