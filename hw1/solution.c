@@ -4,7 +4,6 @@
 #include <time.h>
 #include <limits.h>
 #include "libcoro.h"
-#include "heap_help.h"
 
 struct my_context {
 	char *name;
@@ -18,16 +17,17 @@ struct my_context {
 	int nsec_finish;
 	int sec_total;
 	int nsec_total;
-	/** ADD HERE YOUR OWN MEMBERS, SUCH AS FILE NAME, WORK TIME, ... */
+	int nsec_limit;
 };
 
-static struct my_context *my_context_new(const char *name, char *filename, int **data_p, int* size_p)
+static struct my_context *my_context_new(const char *name, char *filename, int **data_p, int* size_p, int limit)
 {
 	struct my_context *ctx = malloc(sizeof(*ctx));
 	ctx->name = strdup(name);
 	ctx->filename = filename;
 	ctx->arr_p = data_p;
 	ctx->size_p = size_p;
+	ctx->nsec_limit = limit;
 	return ctx;
 }
 
@@ -37,26 +37,18 @@ static void my_context_delete(struct my_context *ctx)
 	free(ctx);
 }
 
-// function to swap elements
-void swap(int *a, int *b) {
-  int t = *a;
-  *a = *b;
-  *b = t;
+static void stop_timer(struct my_context *ctx) {
+	struct timespec time;
+	clock_gettime(CLOCK_MONOTONIC, &time);
+	ctx->sec_finish = time.tv_sec;
+	ctx->nsec_finish = time.tv_nsec;
 }
 
-// function to find the partition position
-int partition(int *array, int low, int high) {
-  int pivot = array[high];
-  int i = (low - 1);
-
-  for (int j = low; j < high; j++) {
-    if (array[j] <= pivot) {
-      i++;
-      swap(&array[i], &array[j]);
-    }
-  }
-  swap(&array[i + 1], &array[high]);
-  return (i + 1);
+static void start_timer(struct my_context *ctx) {
+	struct timespec time;
+	clock_gettime(CLOCK_MONOTONIC, &time);
+	ctx->sec_start = time.tv_sec;
+	ctx->nsec_start = time.tv_nsec;
 }
 
 static void calculate_time(struct my_context *ctx) {
@@ -69,24 +61,45 @@ static void calculate_time(struct my_context *ctx) {
 	}
 }
 
-void quickSort(int *array, int low, int high, struct my_context *ctx) {
+static bool is_exceed(struct my_context *ctx) {
+	stop_timer(ctx);
+	int current_quant = (ctx->sec_finish - ctx->sec_start) * 1000000000 + 
+						(ctx->nsec_finish - ctx->nsec_start);
+	return current_quant > ctx->nsec_limit ? true : false;
+}
+
+void swap(int *a, int *b) {
+  int t = *a;
+  *a = *b;
+  *b = t;
+}
+
+int partition(int *array, int left, int right) {
+  int pivot = array[right];
+  int i = (left - 1);
+
+  for (int j = left; j < right; j++) {
+    if (array[j] <= pivot) {
+      i++;
+      swap(&array[i], &array[j]);
+    }
+  }
+  swap(&array[i + 1], &array[right]);
+  return (i + 1);
+}
+
+void quick_sort(int *array, int low, int high, struct my_context *ctx) {
   if (low < high) {
     int pi = partition(array, low, high);
-    quickSort(array, low, pi - 1, ctx);
-    quickSort(array, pi + 1, high, ctx);
+    quick_sort(array, low, pi - 1, ctx);
+    quick_sort(array, pi + 1, high, ctx);
 
-	struct timespec time;
-	clock_gettime(CLOCK_MONOTONIC, &time);
-	ctx->sec_finish = time.tv_sec;
-	ctx->nsec_finish = time.tv_nsec;
-	
-	calculate_time(ctx);
-	
-	coro_yield();
-	
-	clock_gettime(CLOCK_MONOTONIC, &time);
-	ctx->sec_start = time.tv_sec;
-	ctx->nsec_start = time.tv_nsec;	
+	if (is_exceed(ctx)) {
+		stop_timer(ctx);
+		calculate_time(ctx);
+		coro_yield();
+		start_timer(ctx);
+	}
   }
 }
 
@@ -94,10 +107,7 @@ static int coroutine_func_f(void *context)
 {
 	struct coro *this = coro_this();
 	struct my_context *ctx = context;
-	struct timespec start;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	ctx->sec_start = start.tv_sec;
-	ctx->nsec_start = start.tv_nsec;
+	start_timer(ctx);
 	char *filename = ctx->filename;
 	FILE *in = fopen(filename, "r");
 	if (!in) {
@@ -119,22 +129,18 @@ static int coroutine_func_f(void *context)
 	ctx->arr = realloc(ctx->arr, cap * sizeof(int));
 
 	fclose(in);
-	quickSort(ctx->arr, 0, size, ctx);
+	quick_sort(ctx->arr, 0, size, ctx);
 	*ctx->arr_p = ctx->arr; 
 	*ctx->size_p = size;
 	
-	struct timespec finish;
-	clock_gettime(CLOCK_MONOTONIC, &finish);
-	ctx->sec_finish = finish.tv_sec;
-	ctx->nsec_finish = finish.tv_nsec;
-	
+	stop_timer(ctx);
 	calculate_time(ctx);
 
-	printf("%s info:\nswitch count %lld\nworked %dms\n\n",
+	printf("%s info:\nswitch count %lld\nworked %d us\n\n",
 	 	ctx->name,
 	    coro_switch_count(this),
 		ctx->sec_total * 1000000 + ctx->nsec_total / 1000
-		);
+	);
 	my_context_delete(ctx);
 	return 0;
 }
@@ -153,26 +159,31 @@ int merge(int **data, int *size, int *idx, int cnt) {
 
 int main(int argc, char **argv)
 {
+	struct timespec start;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	int file_count = argc - 2;
 	coro_sched_init();
-	int *p[argc - 1];
-	int **data[argc - 1];
-	int s[argc - 1];
-	int *size[argc - 1];
-	for (int i = 0; i < argc - 1; ++i) {
+	int *p[file_count];
+	int **data[file_count];
+	int s[file_count];
+	int *size[file_count];
+	for (int i = 0; i < file_count; ++i) {
 
 		char name[16];
 		sprintf(name, "coro_%d", i);
 		data[i] = &p[i]; 
 		size[i] = &s[i];
-		coro_new(coroutine_func_f, my_context_new(name, argv[i + 1], data[i], size[i]));
+		coro_new(coroutine_func_f, 
+				 my_context_new(name, argv[i + 2], data[i], size[i], 
+				 atoi(argv[1]) * 1000 / file_count));
 	}
 	struct coro *c;
 	while ((c = coro_sched_wait()) != NULL) {
 		coro_delete(c);
 	}
-	int idx[argc - 1];
+	int idx[file_count];
 	int total_size = 0;
-	for (int i = 0; i < argc - 1; ++i) {
+	for (int i = 0; i < file_count; ++i) {
 		p[i] = *data[i];
 		s[i] = *size[i];
 		idx[i] = 0;
@@ -184,7 +195,7 @@ int main(int argc, char **argv)
 	int min_idx = 0;
 	
 	while(min_idx != -1) {
-		min_idx = merge(p, s, idx, argc - 1);
+		min_idx = merge(p, s, idx, file_count);
 		if (min_idx != -1) {
 			fprintf(out, "%d ", p[min_idx][idx[min_idx]]);
 			idx[min_idx] += 1;
@@ -192,9 +203,15 @@ int main(int argc, char **argv)
 	}
 	fclose(out);
 	
-	for (int i = 0; i < argc - 1; ++i) {
+	for (int i = 0; i < file_count; ++i) {
 		free(*data[i]);
 	}
+
+	struct timespec finish;
+	clock_gettime(CLOCK_MONOTONIC, &finish);
+	
+	printf("total time: %ld us\n", 
+			(finish.tv_sec - start.tv_sec) * 1000000 + (finish.tv_nsec - start.tv_nsec) / 1000);
 
 	return 0;
 }
