@@ -3,5 +3,7 @@ GCC_FLAGS = -Wextra -Werror -Wall -Wno-gnu-folding-constant -ldl -rdynamic -I ..
 all: libcoro.c solution.c
 	gcc $(GCC_FLAGS) libcoro.c solution.c ../utils/heap_help/heap_help.c -o main
 
+.PHONY: clean
 clean:
 	rm main
+	rm out.txt
