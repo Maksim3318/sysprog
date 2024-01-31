@@ -129,7 +129,7 @@ static int coroutine_func_f(void *context)
 	ctx->arr = realloc(ctx->arr, cap * sizeof(int));
 
 	fclose(in);
-	quick_sort(ctx->arr, 0, size, ctx);
+	quick_sort(ctx->arr, 0, size - 1, ctx);
 	*ctx->arr_p = ctx->arr; 
 	*ctx->size_p = size;
 	
