@@ -69,38 +69,38 @@ static bool is_exceed(struct my_context *ctx) {
 }
 
 void swap(int *a, int *b) {
-  int t = *a;
-  *a = *b;
-  *b = t;
+	int t = *a;
+	*a = *b;
+	*b = t;
 }
 
 int partition(int *array, int left, int right) {
-  int pivot = array[right];
-  int i = (left - 1);
+	int pivot = array[right];
+	int i = (left - 1);
 
-  for (int j = left; j < right; j++) {
-    if (array[j] <= pivot) {
-      i++;
-      swap(&array[i], &array[j]);
-    }
-  }
-  swap(&array[i + 1], &array[right]);
-  return (i + 1);
+	for (int j = left; j < right; j++) {
+		if (array[j] <= pivot) {
+			i++;
+			swap(&array[i], &array[j]);
+		}
+	}
+	swap(&array[i + 1], &array[right]);
+	return (i + 1);
 }
 
-void quick_sort(int *array, int low, int high, struct my_context *ctx) {
-  if (low < high) {
-    int pi = partition(array, low, high);
-    quick_sort(array, low, pi - 1, ctx);
-    quick_sort(array, pi + 1, high, ctx);
+void quick_sort(int *array, int left, int right, struct my_context *ctx) {
+	if (left < right) {
+		int pi = partition(array, left, right);
+		quick_sort(array, left, pi - 1, ctx);
+		quick_sort(array, pi + 1, right, ctx);
 
-	if (is_exceed(ctx)) {
-		stop_timer(ctx);
-		calculate_time(ctx);
-		coro_yield();
-		start_timer(ctx);
+		if (is_exceed(ctx)) {
+			stop_timer(ctx);
+			calculate_time(ctx);
+			coro_yield();
+			start_timer(ctx);
+		}
 	}
-  }
 }
 
 static int coroutine_func_f(void *context)
@@ -161,14 +161,15 @@ int main(int argc, char **argv)
 {
 	struct timespec start;
 	clock_gettime(CLOCK_MONOTONIC, &start);
-	int file_count = argc - 2;
+	
 	coro_sched_init();
+	int file_count = argc - 2;
 	int *p[file_count];
 	int **data[file_count];
 	int s[file_count];
 	int *size[file_count];
-	for (int i = 0; i < file_count; ++i) {
 
+	for (int i = 0; i < file_count; ++i) {
 		char name[16];
 		sprintf(name, "coro_%d", i);
 		data[i] = &p[i]; 
@@ -193,7 +194,6 @@ int main(int argc, char **argv)
 	FILE *out = fopen("out.txt", "w");
 
 	int min_idx = 0;
-	
 	while(min_idx != -1) {
 		min_idx = merge(p, s, idx, file_count);
 		if (min_idx != -1) {
