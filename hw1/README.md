@@ -20,12 +20,15 @@ python3 generator.py -f test1.txt -c 40000 -m 1000000 && python3 generator.py -f
 ### Run
 
 ```
-./main T files_list
+./main T N files_list
 ```
+T - target latency
+
+N - coroutine count
 
 For test:
 ```
-HHREPORT=v ./main 100 test1.txt test2.txt test3.txt test4.txt test5.txt test6.txt
+HHREPORT=v ./main 100 4 test1.txt test2.txt test3.txt test4.txt test5.txt test6.txt
 ```
 
 ### Check result
