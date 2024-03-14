@@ -220,8 +220,7 @@ ssize_t ufs_write(int fd, const char *buf, size_t size) {
 	}
 	while (done < size) {
 		if (filedesc->block_pos == BLOCK_SIZE) {
-			ufs_push_block(block);
-			block = block->next;
+			block = ufs_push_block(block);
 			file->last_block = block;
 			filedesc->block++;
 			filedesc->block_pos = 0;
@@ -287,7 +286,11 @@ int ufs_close(int fd) {
 		ufs_error_code = UFS_ERR_NO_FILE;
 		return -1;
 	}
-	file_descriptors[fd - 1]->file->refs--;
+	struct file *file = file_descriptors[fd - 1]->file;
+	file->refs--;
+	if (!file->refs-- && file->is_deleted) {
+		ufs_delete_file(file);
+	}
 	free(file_descriptors[fd - 1]);
 	file_descriptor_count--;
 	file_descriptors[fd - 1] = NULL;
@@ -339,10 +342,15 @@ int ufs_resize(int fd, size_t new_size) {
 		file->block_list = NULL;
 	}
 	while(file->size < (size_t)new_size) {
-		file->size -= file->last_block->occupied;
-		file->last_block->occupied = BLOCK_SIZE;
-		file->size += file->last_block->occupied;
-		file->last_block = ufs_push_block(file->last_block);
+		if (file->size - file->last_block->occupied + BLOCK_SIZE < new_size) {
+			file->size -= file->last_block->occupied;
+			file->last_block->occupied = BLOCK_SIZE;
+			file->size += file->last_block->occupied;
+			file->last_block = ufs_push_block(file->last_block);
+		} else {
+			file->last_block->occupied = new_block_pos;
+			file->size = new_size;
+		}
 	}
 	for (int i = 0; i < file_descriptor_capacity; ++i) {
 		struct filedesc *tmp = file_descriptors[i];

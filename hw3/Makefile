@@ -10,7 +10,7 @@ userfs.o: userfs.c
 	gcc $(GCC_FLAGS) -c userfs.c -o userfs.o
 
 leaks: test.c userfs.c ../utils/heap_help/heap_help.c
-	gcc $(GCC_FLAGS) -g -ldl -rdynamic -I ../utils userfs.c test.c ../utils/heap_help/heap_help.c -o leaks
+	gcc $(GCC_FLAGS) -ldl -rdynamic -I ../utils userfs.c test.c ../utils/heap_help/heap_help.c -o leaks
 
 .PHONY: clean
 clean:
