@@ -220,8 +220,12 @@ ssize_t ufs_write(int fd, const char *buf, size_t size) {
 	}
 	while (done < size) {
 		if (filedesc->block_pos == BLOCK_SIZE) {
-			block = ufs_push_block(block);
-			file->last_block = block;
+			if (!block->next) {
+				block = ufs_push_block(block);
+				file->last_block = block;
+			} else {
+				block = block->next;
+			}
 			filedesc->block++;
 			filedesc->block_pos = 0;
 		}
