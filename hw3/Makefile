@@ -15,4 +15,5 @@ leaks: test.c userfs.c ../utils/heap_help/heap_help.c
 .PHONY: clean
 clean:
 	rm -f main
+	rm -f leaks
 	rm -f *.o
