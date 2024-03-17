@@ -291,7 +291,6 @@ int ufs_close(int fd) {
 		return -1;
 	}
 	struct file *file = file_descriptors[fd - 1]->file;
-	file->refs--;
 	if (!file->refs-- && file->is_deleted) {
 		ufs_delete_file(file);
 	}
