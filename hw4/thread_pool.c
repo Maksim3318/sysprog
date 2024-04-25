@@ -9,7 +9,8 @@
 enum status {
 	NOT_STARTED = 0,
 	RUNNING,
-	FINISHED
+	FINISHED, 
+	DETACHED
 };
 
 struct thread_task {
@@ -72,7 +73,9 @@ static void push_back(struct thread_pool *pool, struct thread_task *task) {
 
 static void execute(struct thread_task *task) {
 	pthread_mutex_lock(&task->mutex);
-	task->status = RUNNING;
+	if (task->status != DETACHED) {
+		task->status = RUNNING;
+	}
 	pthread_mutex_unlock(&task->mutex);
 	task->pool->waiting_thread_count--;
 	pthread_mutex_unlock(&task->pool->mutex);
@@ -82,7 +85,9 @@ static void execute(struct thread_task *task) {
 	pthread_mutex_lock(&task->pool->mutex);
 	task->pool->waiting_thread_count++;
 	pthread_mutex_lock(&task->mutex); 
-	task->status = FINISHED;
+	if (task->status != DETACHED) {
+		task->status = FINISHED;
+	}
 	task->result = result;
 	pthread_mutex_unlock(&task->mutex);
 }
@@ -101,7 +106,12 @@ static void *thread_f(void *args) {
 		}
 		struct thread_task *task = pop_front(pool);
 		execute(task);
-		pthread_cond_signal(&task->finished);
+		if (task->status == DETACHED) {
+			task->pool = NULL;
+			thread_task_delete(task);
+		} else {
+			pthread_cond_signal(&task->finished);
+		}
 	}
 	return NULL;
 }
@@ -280,12 +290,21 @@ int thread_task_delete(struct thread_task *task) {
 
 #ifdef NEED_DETACH
 
-int
-thread_task_detach(struct thread_task *task)
-{
-	/* IMPLEMENT THIS FUNCTION */
-	(void)task;
-	return TPOOL_ERR_NOT_IMPLEMENTED;
+int thread_task_detach(struct thread_task *task) {
+	pthread_mutex_lock(&task->mutex);
+	if (!task->pool) {
+		pthread_mutex_unlock(&task->mutex);
+		return TPOOL_ERR_TASK_NOT_PUSHED;
+	}
+	if (task->status == FINISHED) {
+		task->pool = NULL;
+		pthread_mutex_unlock(&task->mutex);
+		thread_task_delete(task);
+	} else {
+		task->status = DETACHED;
+		pthread_mutex_unlock(&task->mutex);
+	}
+	return 0;
 }
 
 #endif
