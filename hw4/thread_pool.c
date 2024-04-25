@@ -268,10 +268,9 @@ int thread_task_timed_join(struct thread_task *task, double timeout, void **resu
 		pthread_mutex_unlock(&task->mutex);
 		return TPOOL_ERR_TIMEOUT;
 	}
-    
 	*result = task->result;
-    task->pool = NULL;
-    pthread_mutex_unlock(&task->mutex);
+	task->pool = NULL;
+	pthread_mutex_unlock(&task->mutex);
 
 	return 0;
 }
