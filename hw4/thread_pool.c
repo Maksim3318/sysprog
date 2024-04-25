@@ -2,6 +2,9 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <float.h>
+#include <math.h>
+#include <errno.h>
 
 enum status {
 	NOT_STARTED = 0,
@@ -228,14 +231,39 @@ int thread_task_join(struct thread_task *task, void **result) {
 
 #ifdef NEED_TIMED_JOIN
 
-int
-thread_task_timed_join(struct thread_task *task, double timeout, void **result)
-{
-	/* IMPLEMENT THIS FUNCTION */
-	(void)task;
-	(void)timeout;
-	(void)result;
-	return TPOOL_ERR_NOT_IMPLEMENTED;
+int thread_task_timed_join(struct thread_task *task, double timeout, void **result) {
+	pthread_mutex_lock(&task->mutex);
+	if (!task->pool) {
+		pthread_mutex_unlock(&task->mutex);
+		return TPOOL_ERR_TASK_NOT_PUSHED;
+	}
+
+	if (timeout < 0 && fabs(timeout) > DBL_EPSILON) { 
+		pthread_mutex_unlock(&task->mutex);
+		return TPOOL_ERR_TIMEOUT;	
+	}
+
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+
+	ts.tv_nsec += (long)((timeout - floor(timeout)) * 1000000000);
+	ts.tv_sec += (long)timeout + ts.tv_nsec / 1000000000;
+	ts.tv_nsec %= 1000000000;
+
+	int err = 0;
+	while (task->status != FINISHED && err != ETIMEDOUT) {
+		err = pthread_cond_timedwait(&task->finished, &task->mutex, &ts);
+	}
+	if (err == ETIMEDOUT) {
+		pthread_mutex_unlock(&task->mutex);
+		return TPOOL_ERR_TIMEOUT;
+	}
+    
+	*result = task->result;
+    task->pool = NULL;
+    pthread_mutex_unlock(&task->mutex);
+
+	return 0;
 }
 
 #endif
