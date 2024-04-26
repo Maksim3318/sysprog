@@ -89,7 +89,6 @@ static void execute(struct thread_task *task) {
 		task->status = FINISHED;
 	}
 	task->result = result;
-	pthread_mutex_unlock(&task->mutex);
 }
 
 static void *thread_f(void *args) {
@@ -108,9 +107,11 @@ static void *thread_f(void *args) {
 		execute(task);
 		if (task->status == DETACHED) {
 			task->pool = NULL;
+			pthread_mutex_unlock(&task->mutex);
 			thread_task_delete(task);
-		} else {
+		} else {	
 			pthread_cond_signal(&task->finished);
+			pthread_mutex_unlock(&task->mutex);
 		}
 	}
 	return NULL;
@@ -283,6 +284,7 @@ int thread_task_delete(struct thread_task *task) {
 	}
 	pthread_mutex_destroy(&task->mutex);
     pthread_cond_destroy(&task->finished);
+
 	free(task);
 	return 0;
 }
