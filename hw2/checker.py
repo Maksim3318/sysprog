@@ -60,7 +60,7 @@ tests = [
 	"f = open('test.txt', 'w')\\n\\\n"\
 	"f.write('Text\\\\\\n')\\n\\\n"\
 	"f.close()\\n\" > test.py",
-"python test.py | exit 0",
+"python3 test.py | exit 0",
 "cat test.txt",
 ],
 [
