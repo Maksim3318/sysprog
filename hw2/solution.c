@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-char **build_argv(const struct command *cmd) {
+static char **build_argv(const struct command *cmd) {
 	char **argv = malloc((2 + cmd->arg_count) * sizeof(char *));
 	argv[0] = cmd->exe;
 	for (uint32_t i = 0; i < cmd->arg_count; ++i) {
@@ -20,34 +20,111 @@ char **build_argv(const struct command *cmd) {
 	return argv;
 }
 
-static void execute_command_line(const struct command_line *line) {
-	const struct expr *e = line->head;
+struct pq_node {
+	pid_t pid;
+	struct pq_node *next;
+};
 
+struct pqueue {
+	struct pq_node *head;
+	struct pq_node *tail;
+};
+
+static struct pq_node *new_node(pid_t pid) {
+	struct pq_node *res = malloc(sizeof(struct pq_node));
+	res->pid = pid;
+	res->next = NULL;
+	return res;
+}
+
+static struct pqueue *new_pqueue() {
+	struct pqueue *res = malloc(sizeof(struct pqueue));
+	res->head = NULL;
+	res->tail = NULL;
+	return res;
+}
+
+static void push_pqueue(struct pqueue *pq, pid_t pid) {
+	struct pq_node *node = new_node(pid);
+	if (!pq->head) {
+		pq->head = node;
+		pq->tail = node;
+	} else {
+		pq->tail->next = node;
+		pq->tail = pq->tail->next;
+	}
+}
+
+static int pop_queue(struct pqueue *pq) {
+	int status = -1;
+	if (pq->head) {
+		struct pq_node *tmp = pq->head;
+		pq->head = pq->head->next;
+		waitpid(tmp->pid, &status, 0);
+		if (WIFEXITED(status)) {
+			status = WEXITSTATUS(status);
+		}
+		free(tmp);
+	}
+	return status;
+}
+
+static void free_pqueue(struct pqueue *pq) {
+	while (pq->head) {
+		struct pq_node *tmp = pq->head;
+		pq->head = pq->head->next;
+		free(tmp);
+	}
+}
+
+static int wait_pqueue(struct pqueue *pq) {
+	int exitcode = 0;
+	while(pq->head) {
+		exitcode = pop_queue(pq);
+	}
+	free_pqueue(pq);
+	return exitcode;
+}
+
+static void move_pipe(int fd_l[2], int fd_r[2]) {
+	if (fd_r[0] != -1) {
+		close(fd_r[0]);
+	}	
+	fd_r[0] = fd_l[0];
+	fd_l[0] = -1;
+
+	if (fd_r[1] != -1) {
+		close(fd_r[1]);
+	}
+	fd_r[1] = fd_l[1];
+	fd_l[1] = -1;
+}
+
+// static struct expr *skip(struct expr *e) {
+// 	struct expr *tmp = e;
+// 	while (tmp->next 
+// 		&& tmp->next->type != EXPR_TYPE_AND 
+// 		&& tmp->next->type != EXPR_TYPE_OR) {
+// 		tmp = tmp->next;
+// 	}
+// 	return tmp;
+// }
+
+static int execute_command_line(struct command_line *line, struct parser *p) {
+	struct expr *e = line->head;
+	int exitcode = 0;
 	if (e->type == EXPR_TYPE_COMMAND 
 		&& !strncmp(e->cmd.exe, "exit", 6)
 		&& e->next == NULL) {
-			int ret = 0;
 			if (e->cmd.arg_count) {
-				ret = atoi(e->cmd.args[0]);
+				exitcode = atoi(e->cmd.args[0]);
 			}
-			exit(ret);
-	}
-	int dup_stdout = dup(STDOUT_FILENO);
-	int dup_stdin = dup(STDIN_FILENO);
-	int file = dup(STDOUT_FILENO);
-	
-	if (line->out_type == OUTPUT_TYPE_FILE_NEW) {
-		file = open(line->out_file, O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-		dup2(file, STDOUT_FILENO);
-	} else if (line->out_type == OUTPUT_TYPE_FILE_APPEND) {
-		file = open(line->out_file, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-		dup2(file, STDOUT_FILENO);
+			parser_delete(p);
+			command_line_delete(line);
+			exit(exitcode);
 	}
 
-	// fprintf(stderr, "dup_stdin = %d\n", dup_stdin);
-	// fprintf(stderr, "dup_stdout = %d\n", dup_stdout);
-	// fprintf(stderr, "file = %d\n", file);
-
+	struct pqueue *pq = new_pqueue();
 	bool in_pipe_left = false;
 	bool in_pipe_right = false;
 	int fd_l[2] = {-1, -1};
@@ -55,7 +132,7 @@ static void execute_command_line(const struct command_line *line) {
 
 	while (e != NULL) {
 		if (e->type == EXPR_TYPE_COMMAND) {
-			// fprintf(stderr, "====================\n");
+
 			if (!strncmp(e->cmd.exe, "cd", 4)) {
 				chdir(*e->cmd.args);
 				e = e->next;
@@ -63,75 +140,69 @@ static void execute_command_line(const struct command_line *line) {
 			}
 			if (e->next && e->next->type == EXPR_TYPE_PIPE) {
 				in_pipe_left = true;
-			} else {
-				in_pipe_left = false;
-			}
-			if (in_pipe_right) {
-				// fprintf(stderr, "RIGHT FROM PIPE\n");
-				dup2(fd_r[0], STDIN_FILENO);
-				// fprintf(stderr, "stdin = %d\n", fd_r[0]);
-				// fprintf(stderr, "%d closed\n", fd_l[1]);
-				close(fd_l[1]);
-			} else {
-				// fprintf(stderr, "NOT RIGHT FROM PIPE\n");
-				dup2(dup_stdin, STDIN_FILENO);
-				// fprintf(stderr, "stdin = %d\n", dup_stdin);
-				// fprintf(stderr, "%d closed\n", fd_r[0]);
-				close(fd_r[0]);
-			}
-			if (in_pipe_left) {
-				// fprintf(stderr, "LEFT FROM PIPE\n");
 				pipe(fd_l);
-				// fprintf(stderr, "pipe() in = %d, out = %d\n", fd_l[0], fd_l[1]);
-				dup2(fd_l[1], STDOUT_FILENO);
-				// fprintf(stderr, "stdout = %d\n", fd_l[1]);
-			} else {
-				// fprintf(stderr, "NOT LEFT FROM PIPE\n");
-				dup2(file, fd_r[1]);
-				dup2(file, STDOUT_FILENO);
-				// fprintf(stderr, "stdout = %d\n", file);
 			}
-			
-			// fprintf(stderr, "FORK CALL\n");
+
 			pid_t pid = fork();
 			if (pid == 0) {
-				// fprintf(stderr, "EXEC CALL %s\n", e->cmd.exe);
+				if (!strncmp(e->cmd.exe, "exit", 6)) {
+					int ret = 0;
+					if (e->cmd.arg_count) {
+						ret = atoi(e->cmd.args[0]);
+					}
+					parser_delete(p);
+					command_line_delete(line);
+					free_pqueue(pq);
+					free(pq);
+					exit(ret);
+				}
+				if (in_pipe_left) {
+					dup2(fd_l[1], STDOUT_FILENO);
+					close(fd_l[0]);
+					close(fd_l[1]);
+				} else if (line->out_type != OUTPUT_TYPE_STDOUT) {
+					int file = -1;
+					int appending_flag = line->out_type == OUTPUT_TYPE_FILE_NEW ? O_TRUNC : O_APPEND;
+					file = open(line->out_file, O_RDWR | O_CREAT | O_CLOEXEC | appending_flag, 0644);
+					dup2(file, STDOUT_FILENO);
+					close(file);
+				}
+				if (in_pipe_right) {
+					close(fd_r[1]);
+					dup2(fd_r[0], STDIN_FILENO);
+					close(fd_r[0]);
+				}
 				char **argv = build_argv(&e->cmd);
 				execvp(e->cmd.exe, argv);
-			} else if (pid > 0) {
-				// fprintf(stderr, "WAIT CALL\n");
-				wait(NULL);
-				// fprintf(stderr, "WAIT END\n");
+			} else {
+				push_pqueue(pq, pid);
 			}
+
 		} else if (e->type == EXPR_TYPE_PIPE) {
 			in_pipe_right = true;
-			if (fd_r[0]) {
-				close (fd_r[0]);
-			}
-			if (fd_r[1]) {
-				close (fd_r[1]);
-			}
-			fd_r[0] = dup(fd_l[0]);
-			// fprintf(stderr, "pipe in_copy = %d", fd_r[0]);
-			// fprintf(stderr, "%d closed\n", fd_l[0]);
-			// fprintf(stderr, "%d closed\n", fd_l[1]);
-			close(fd_l[0]);
-			close(fd_l[1]);
-			fd_l[0] = -1;
-			fd_l[1] = -1;
+			in_pipe_left = false;
+			move_pipe(fd_l, fd_r);
 		} else if (e->type == EXPR_TYPE_AND) {
-
+			// exitcode = wait_pqueue(pq);
+			// if (exitcode) {
+			// 	e = skip(e);
+			// }
+			// in_pipe_left = false;
+			// in_pipe_right = false;
 		} else if (e->type == EXPR_TYPE_OR) {
-		
+			// exitcode = wait_pqueue(pq);
+			// if (!exitcode) {
+			// 	e = skip(e);
+			// }
+			// in_pipe_left = false;
+			// in_pipe_right = false;
 		}
 		e = e->next;
-		dup2(dup_stdout, STDOUT_FILENO);
-		dup2(dup_stdin, STDIN_FILENO);
 	}
-	dup2(dup_stdin, STDIN_FILENO);
-	dup2(dup_stdout, STDOUT_FILENO);
-	close(dup_stdin);
-	close(dup_stdout);
+	move_pipe(fd_r, fd_r);
+	exitcode = wait_pqueue(pq);
+	free(pq);
+	return exitcode;
 }
 
 int main(void) {
@@ -139,10 +210,10 @@ int main(void) {
 	char buf[buf_size];
 	int rc;
 	struct parser *p = parser_new();
+	int exitcode = 0;
 	while ((rc = read(STDIN_FILENO, buf, buf_size)) > 0) {
 		parser_feed(p, buf, rc);
 		struct command_line *line = NULL;
-		// fprintf(stderr, "here\n");
 		while (true) {
 			enum parser_error err = parser_pop_next(p, &line);
 			if (err == PARSER_ERR_NONE && line == NULL)
@@ -151,10 +222,11 @@ int main(void) {
 				printf("Error: %d\n", (int)err);
 				continue;
 			}
-			execute_command_line(line);
+			exitcode = execute_command_line(line, p);
+			// printf("exit code = %d\n", exitcode);
 			command_line_delete(line);
 		}
 	}
 	parser_delete(p);
-	return 0;
+	return exitcode;
 }
