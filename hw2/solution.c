@@ -174,6 +174,7 @@ static int execute_command_line(struct command_line *line, struct parser *p) {
 				}
 				char **argv = build_argv(&e->cmd);
 				execvp(e->cmd.exe, argv);
+				free(argv);
 			} else {
 				push_pqueue(pq, pid);
 			}
@@ -225,7 +226,6 @@ int main(void) {
 				continue;
 			}
 			exitcode = execute_command_line(line, p);
-			// printf("exit code = %d\n", exitcode);
 			command_line_delete(line);
 		}
 	}
