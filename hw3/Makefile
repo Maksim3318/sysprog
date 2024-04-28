@@ -1,6 +1,8 @@
 GCC_FLAGS = -Wextra -Werror -Wall -Wno-gnu-folding-constant
 
-all: test.o userfs.o
+all: main leaks
+
+main: test.o userfs.o
 	gcc $(GCC_FLAGS) test.o userfs.o -o main
 
 test.o: test.c userfs.h

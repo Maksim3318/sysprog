@@ -1,6 +1,8 @@
 GCC_FLAGS = -Wextra -Werror -Wall -Wno-gnu-folding-constant
 
-all: test.o thread_pool.o
+all: main leaks
+
+main: test.o thread_pool.o
 	gcc $(GCC_FLAGS) -g test.o thread_pool.o -lm -o main
 
 test.o: test.c thread_pool.h
