@@ -100,15 +100,15 @@ static void move_pipe(int fd_l[2], int fd_r[2]) {
 	fd_l[1] = -1;
 }
 
-// static struct expr *skip(struct expr *e) {
-// 	struct expr *tmp = e;
-// 	while (tmp->next 
-// 		&& tmp->next->type != EXPR_TYPE_AND 
-// 		&& tmp->next->type != EXPR_TYPE_OR) {
-// 		tmp = tmp->next;
-// 	}
-// 	return tmp;
-// }
+static struct expr *skip(struct expr *e) {
+	struct expr *tmp = e;
+	while (tmp->next 
+		&& tmp->next->type != EXPR_TYPE_AND 
+		&& tmp->next->type != EXPR_TYPE_OR) {
+		tmp = tmp->next;
+	}
+	return tmp;
+}
 
 static int execute_command_line(struct command_line *line, struct parser *p) {
 	struct expr *e = line->head;
@@ -183,19 +183,21 @@ static int execute_command_line(struct command_line *line, struct parser *p) {
 			in_pipe_left = false;
 			move_pipe(fd_l, fd_r);
 		} else if (e->type == EXPR_TYPE_AND) {
-			// exitcode = wait_pqueue(pq);
-			// if (exitcode) {
-			// 	e = skip(e);
-			// }
-			// in_pipe_left = false;
-			// in_pipe_right = false;
+			move_pipe(fd_l, fd_r);
+			exitcode = wait_pqueue(pq);
+			if (exitcode) {
+				e = skip(e);
+			}
+			in_pipe_left = false;
+			in_pipe_right = false;
 		} else if (e->type == EXPR_TYPE_OR) {
-			// exitcode = wait_pqueue(pq);
-			// if (!exitcode) {
-			// 	e = skip(e);
-			// }
-			// in_pipe_left = false;
-			// in_pipe_right = false;
+			move_pipe(fd_l, fd_r);
+			exitcode = wait_pqueue(pq);
+			if (!exitcode) {
+				e = skip(e);
+			}
+			in_pipe_left = false;
+			in_pipe_right = false;
 		}
 		e = e->next;
 	}
