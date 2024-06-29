@@ -94,7 +94,6 @@ static void execute(struct thread_task *task) {
 static void *thread_f(void *args) {
 	struct thread_pool *pool = args;
 	pthread_mutex_lock(&pool->mutex);
-	pool->waiting_thread_count++;
 	while(true) {
 		while (!pool->queue_tasks_size && !pool->terminate) {
 			pthread_cond_wait(&pool->new_task, &pool->mutex);
@@ -187,6 +186,7 @@ int thread_pool_push_task(struct thread_pool *pool, struct thread_task *task) {
 	if (pool->waiting_thread_count == 0 && pool->current_thread_count < pool->max_thread_count) {
 		pthread_create(pool->threads + pool->current_thread_count, NULL, thread_f, pool);
 		pool->current_thread_count++;
+		pool->waiting_thread_count++;
 	}
 
 	pthread_cond_signal(&pool->new_task);
